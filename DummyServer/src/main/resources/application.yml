@@ -1,6 +1,7 @@
 loadbalancer:
     url: http://localhost:9090/register
-
 logging:
   level:
     ron: debug
+server:
+  port: 0

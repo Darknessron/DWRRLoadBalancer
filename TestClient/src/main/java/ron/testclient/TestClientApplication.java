@@ -23,7 +23,7 @@ public class TestClientApplication {
     ObjectNode req = mapper.createObjectNode();
     req.put("Name", "Ron");
     req.put("Email", "cg12192001@gmail.com");
-    HttpRequest request = HttpRequest.newBuilder(new URI("http://localhost:8083/dummy"))
+    HttpRequest request = HttpRequest.newBuilder(new URI("http://localhost:8083"))
         .header("Content-Type", "application/json")
         .POST(HttpRequest.BodyPublishers.ofString(req.toString())).build();
 
