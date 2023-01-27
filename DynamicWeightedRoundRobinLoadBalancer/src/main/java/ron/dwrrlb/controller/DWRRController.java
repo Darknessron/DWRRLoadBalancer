@@ -7,6 +7,7 @@ import java.net.URI;
 import java.net.URISyntaxException;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
+import java.net.http.HttpRequest.BodyPublishers;
 import java.net.http.HttpResponse;
 import java.net.http.HttpResponse.BodyHandlers;
 import java.util.ArrayList;
@@ -34,13 +35,46 @@ public class DWRRController {
   private final ReentrantReadWriteLock lock = new ReentrantReadWriteLock();
   private final HttpClient client = HttpClient.newBuilder().build();
 
-  private final long count = 0;
+  private volatile long count = 0;
   private final List<ServerNode> availableServers = new ArrayList<>();
   private final List<ServerNode> unavailableServers = new ArrayList<>();
 
   @PostMapping
-  public ResponseEntity<JsonNode> loadBalance(@RequestBody JsonNode jsonNode) {
-    return ResponseEntity.ok().build();
+  public ResponseEntity<JsonNode> loadBalance(@RequestBody JsonNode jsonNode)
+      throws URISyntaxException, IOException, InterruptedException {
+    if (count == Long.MAX_VALUE) count = 0;
+    ServerNode node;
+    lock.readLock().lock();
+    int serverSize = availableServers.size();
+    try {
+      int index = (int) (count % serverSize);
+      node = availableServers.get(index);
+    }finally {
+      lock.readLock().unlock();
+    }
+    // Loading too heavy, skip to next node.
+    if (node.getWeight() < 50 && serverSize != 1)  {
+      count++;
+      loadBalance(jsonNode);
+    }
+
+    HttpRequest req = HttpRequest.newBuilder().uri(new URI(node.getAddress() + node.getUri())).POST(
+        BodyPublishers.ofString(jsonNode.toString())).build();
+    long startMillisecond = System.currentTimeMillis();
+    String response = client.send(req, BodyHandlers.ofString()).body();
+    long endMillisecond = System.currentTimeMillis();
+    JsonNode resp = new ObjectMapper().readTree(response);
+
+    long processTime = endMillisecond - startMillisecond;
+    // Process speed less than 2 seconds, increase the weight
+    if (processTime < 20000) {
+      if (node.getWeight() != 100) node.setWeight(node.getWeight() * 2);
+    } else if (processTime > 30000) {
+      // Process speed more than 3 seconds, decrease the weight
+      node.setWeight(node.getWeight() / 2);
+    }
+
+    return ResponseEntity.ok(resp);
   }
 
   @PostMapping(value = "/register", consumes = MediaType.APPLICATION_JSON_VALUE)
@@ -81,10 +115,20 @@ public class DWRRController {
       }
 
       if (result.get("status").asText().equals("DOWN")) {
-        it.remove();
+        lock.writeLock().lock();
+        try {
+          it.remove();
+        }finally {
+          lock.writeLock().unlock();
+        }
       } else {
-        unavailableServers.add(node);
-        it.remove();
+        lock.writeLock().lock();
+        try {
+          unavailableServers.add(node);
+          it.remove();
+        }finally {
+          lock.writeLock().unlock();
+        }
       }
     }
   }
