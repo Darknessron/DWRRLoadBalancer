@@ -3,6 +3,7 @@ package ron.dwrrlb.controller;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.IOException;
+import java.net.ConnectException;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.net.http.HttpClient;
@@ -18,6 +19,7 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 import java.util.stream.IntStream;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.boot.actuate.health.Status;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.lang.NonNull;
@@ -117,40 +119,44 @@ public class DWRRController {
   }
 
   @Scheduled(fixedRate = 30, timeUnit = TimeUnit.SECONDS)
-  private void checkHealth() throws URISyntaxException, IOException, InterruptedException {
+  private void healthCheckJob() throws URISyntaxException, IOException, InterruptedException {
     if (availableServers.isEmpty()) {
       return;
     }
     Iterator<ServerNode> it = availableServers.iterator();
     ServerNode node;
     ObjectMapper mapper = new ObjectMapper();
-
+    JsonNode healthResult = null;
     while (it.hasNext()) {
       node = it.next();
       HttpRequest request = HttpRequest.newBuilder()
           .uri(new URI(node.getAddress() + "/actuator/health")).GET().build();
-      HttpResponse<String> response = client.send(request, BodyHandlers.ofString());
-      JsonNode result = mapper.readTree(response.body());
-
-      if (result.get("status").asText().equals("UP")) {
-        log.info("Server {} is health", node.getServerName());
-        continue;
-      }
-
-      if (result.get("status").asText().equals("DOWN")) {
+      HttpResponse<String> response;
+      try {
+        response = client.send(request, BodyHandlers.ofString());
+        healthResult = mapper.readTree(response.body());
+      }catch (ConnectException ce)  {
+        log.info("node {} can't connect", node.getServerName());
         lock.writeLock().lock();
         try {
           it.remove();
         } finally {
           lock.writeLock().unlock();
         }
-      } else {
-        lock.writeLock().lock();
-        try {
-          unavailableServers.add(node);
-          it.remove();
-        } finally {
-          lock.writeLock().unlock();
+        return;
+      }
+      String healthStatus = healthResult.get("status").asText();
+      switch (healthStatus)  {
+        case "DOWN", "OUT_OF_SERVICE", "UNKNOWN" -> {
+          log.info("Node {} is temporary unreachable", node.getServerName());
+          //Node is temporary unreachable, move to unavailableServers
+          lock.writeLock().lock();
+          try {
+            unavailableServers.add(node);
+            it.remove();
+          } finally {
+            lock.writeLock().unlock();
+          }
         }
       }
     }
