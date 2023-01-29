@@ -28,6 +28,7 @@ public class TestClientApplication {
         .POST(HttpRequest.BodyPublishers.ofString(req.toString())).build();
 
     HttpResponse<String> response = HttpClient.newHttpClient().send(request, BodyHandlers.ofString());
+    System.out.println(response.statusCode());
     System.out.println(response.body());
   }
 
