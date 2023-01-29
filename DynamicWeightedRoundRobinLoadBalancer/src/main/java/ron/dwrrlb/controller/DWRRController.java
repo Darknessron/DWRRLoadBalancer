@@ -19,6 +19,7 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 import java.util.stream.IntStream;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.lang.NonNull;
@@ -49,7 +50,11 @@ public class DWRRController {
       count.set(0);
     }
     int serverSize = availableServers.size();
-    log.info("{} nodes available", serverSize);
+    if (serverSize == 0) {
+      log.info("No node available");
+      return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).build();
+    }
+    log.debug("{} nodes available", serverSize);
 
     int index = (int) (count.get() % serverSize);
     ServerNode node = availableServers.get(index);
@@ -57,7 +62,7 @@ public class DWRRController {
     JsonNode result;
     // Loading too heavy, skip to less loading node.
     if (node.getWeight() < 50 && serverSize != 1) {
-      log.info("node {} loading too heavy, skip to next node", node.getServerName());
+      log.debug("node {} loading too heavy, skip to next node", node.getServerName());
 
       //Check other nodes' weight
       int ind = IntStream.range(0, availableServers.size())
@@ -163,7 +168,7 @@ public class DWRRController {
       healthStatus = getHealthStatus(node);
       if (healthStatus == null) {
         //Can't connect to actuator
-        log.info("node {} can't connect", node.getServerName());
+        log.debug("node {} can't connect", node.getServerName());
         lock.writeLock().lock();
         try {
           it.remove();
@@ -175,7 +180,7 @@ public class DWRRController {
       switch (healthStatus) {
         case "DOWN", "OUT_OF_SERVICE", "UNKNOWN" -> {
           //Still can connect to actuator
-          log.info("Node {} is temporary unreachable", node.getServerName());
+          log.debug("Node {} is temporary unreachable", node.getServerName());
           //Node is temporary unreachable, move to unavailableServers
           lock.writeLock().lock();
           try {
@@ -189,6 +194,7 @@ public class DWRRController {
         }
         case "UP" -> {
           if (isUnavailable) {
+            log.debug("Node {} resume to work", node.getServerName());
             availableServers.add(node);
             it.remove();
           }
