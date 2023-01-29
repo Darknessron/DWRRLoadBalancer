@@ -19,7 +19,6 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 import java.util.stream.IntStream;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.boot.actuate.health.Status;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.lang.NonNull;
@@ -118,24 +117,52 @@ public class DWRRController {
     return ResponseEntity.ok(true);
   }
 
-  @Scheduled(fixedRate = 30, timeUnit = TimeUnit.SECONDS)
-  private void healthCheckJob() throws URISyntaxException, IOException, InterruptedException {
-    if (availableServers.isEmpty()) {
-      return;
-    }
-    Iterator<ServerNode> it = availableServers.iterator();
-    ServerNode node;
+  private String getHealthStatus(ServerNode node)
+      throws URISyntaxException, IOException, InterruptedException {
+    String healthStatus = null;
+
     ObjectMapper mapper = new ObjectMapper();
     JsonNode healthResult = null;
+
+    HttpRequest request = HttpRequest.newBuilder()
+        .uri(new URI(node.getAddress() + "/actuator/health")).GET().build();
+    HttpResponse<String> response;
+    try {
+      response = client.send(request, BodyHandlers.ofString());
+      healthResult = mapper.readTree(response.body());
+    } catch (ConnectException ce) {
+      //Can't connect to actuator
+      return null;
+    }
+    healthStatus = healthResult.get("status").asText();
+
+    return healthStatus;
+  }
+
+  @Scheduled(fixedRate = 30, timeUnit = TimeUnit.SECONDS)
+  private void healthCheckJob() throws URISyntaxException, IOException, InterruptedException {
+    healthCheck(availableServers, false);
+  }
+
+  @Scheduled(fixedRate = 300, timeUnit = TimeUnit.SECONDS)
+  private void checkUnavailableServersJob()
+      throws URISyntaxException, IOException, InterruptedException {
+    healthCheck(unavailableServers, true);
+  }
+
+  private void healthCheck(List<ServerNode> list, boolean isUnavailable)
+      throws URISyntaxException, IOException, InterruptedException {
+    if (list.isEmpty()) {
+      return;
+    }
+    Iterator<ServerNode> it = list.iterator();
+    ServerNode node;
+    String healthStatus;
     while (it.hasNext()) {
       node = it.next();
-      HttpRequest request = HttpRequest.newBuilder()
-          .uri(new URI(node.getAddress() + "/actuator/health")).GET().build();
-      HttpResponse<String> response;
-      try {
-        response = client.send(request, BodyHandlers.ofString());
-        healthResult = mapper.readTree(response.body());
-      }catch (ConnectException ce)  {
+      healthStatus = getHealthStatus(node);
+      if (healthStatus == null) {
+        //Can't connect to actuator
         log.info("node {} can't connect", node.getServerName());
         lock.writeLock().lock();
         try {
@@ -143,24 +170,33 @@ public class DWRRController {
         } finally {
           lock.writeLock().unlock();
         }
-        return;
+        continue;
       }
-      String healthStatus = healthResult.get("status").asText();
-      switch (healthStatus)  {
+      switch (healthStatus) {
         case "DOWN", "OUT_OF_SERVICE", "UNKNOWN" -> {
+          //Still can connect to actuator
           log.info("Node {} is temporary unreachable", node.getServerName());
           //Node is temporary unreachable, move to unavailableServers
           lock.writeLock().lock();
           try {
-            unavailableServers.add(node);
-            it.remove();
+            if (!isUnavailable) {
+              unavailableServers.add(node);
+              it.remove();
+            }
           } finally {
             lock.writeLock().unlock();
+          }
+        }
+        case "UP" -> {
+          if (isUnavailable) {
+            availableServers.add(node);
+            it.remove();
           }
         }
       }
     }
   }
+
 
   private boolean isValidNode(@NonNull ServerNode node) {
     if (!StringUtils.hasText(node.getServerName())) {
