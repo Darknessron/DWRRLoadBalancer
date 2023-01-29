@@ -1,6 +1,5 @@
 package ron.dwrrlb.controller;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.IOException;
@@ -15,6 +14,7 @@ import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 import java.util.stream.IntStream;
 import lombok.extern.slf4j.Slf4j;
@@ -37,37 +37,35 @@ public class DWRRController {
   private final ReentrantReadWriteLock lock = new ReentrantReadWriteLock();
   private final HttpClient client = HttpClient.newBuilder().build();
 
-  private volatile long count = 0;
+  private final AtomicLong count = new AtomicLong();
   private final List<ServerNode> availableServers = new ArrayList<>();
   private final List<ServerNode> unavailableServers = new ArrayList<>();
 
   @PostMapping(consumes = MediaType.APPLICATION_JSON_VALUE)
   public ResponseEntity<JsonNode> loadBalance(@RequestBody JsonNode jsonNode)
       throws URISyntaxException, IOException, InterruptedException {
-    if (count == Long.MAX_VALUE) count = 0;
-    ServerNode node;
-    lock.readLock().lock();
+    if (count.get() == Long.MAX_VALUE) {
+      count.set(0);
+    }
     int serverSize = availableServers.size();
     log.info("{} nodes available", serverSize);
-    try {
-      int index = (int) (count % serverSize);
-      node = availableServers.get(index);
-    }finally {
-      lock.readLock().unlock();
-    }
+
+    int index = (int) (count.get() % serverSize);
+    ServerNode node = availableServers.get(index);
 
     JsonNode result;
     // Loading too heavy, skip to less loading node.
-    if (node.getWeight() < 50 && serverSize != 1)  {
+    if (node.getWeight() < 50 && serverSize != 1) {
       log.info("node {} loading too heavy, skip to next node", node.getServerName());
 
       //Check other nodes' weight
-      int index = IntStream.range(0, availableServers.size()).filter(i -> availableServers.get(i).getWeight() >= 50).findFirst().orElse(-1);
+      int ind = IntStream.range(0, availableServers.size())
+          .filter(i -> availableServers.get(i).getWeight() >= 50).findFirst().orElse(-1);
 
-      if (index >= 0 ) {
+      if (ind >= 0) {
         //All nodes are busy, follow original order.
         result = processRequest(node, jsonNode);
-      }else {
+      } else {
         //Jump to less loading node
         result = processRequest(availableServers.get(index), jsonNode);
       }
@@ -80,7 +78,7 @@ public class DWRRController {
   private JsonNode processRequest(ServerNode node, JsonNode jsonNode)
       throws IOException, URISyntaxException, InterruptedException {
 
-    HttpRequest req = HttpRequest.newBuilder().uri(new URI(node.getAddress() +"/"+ node.getUri()))
+    HttpRequest req = HttpRequest.newBuilder().uri(new URI(node.getAddress() + "/" + node.getUri()))
         .header("Content-Type", "application/json")
         .POST(BodyPublishers.ofString(jsonNode.toString())).build();
     long startMillisecond = System.currentTimeMillis();
@@ -89,7 +87,8 @@ public class DWRRController {
     JsonNode resp = new ObjectMapper().readTree(response);
 
     long processTime = endMillisecond - startMillisecond;
-    log.info("Node:{}  Process Time: {} ms, weight: {}", node.getServerName(), processTime, node.getWeight());
+    log.info("Node:{}  Process Time: {} ms, weight: {}", node.getServerName(), processTime,
+        node.getWeight());
     // Process speed less than 2 seconds, resume the weight to 100
     if (processTime < 2000) {
       node.setWeight(100);
@@ -97,12 +96,7 @@ public class DWRRController {
       // Process speed more than 3 seconds, decrease the weight
       node.setWeight(node.getWeight() / 2);
     }
-    lock.writeLock().lock();
-    try {
-      count++;
-    }finally {
-      lock.writeLock().unlock();
-    }
+    count.getAndIncrement();
     return resp;
   }
 
@@ -147,7 +141,7 @@ public class DWRRController {
         lock.writeLock().lock();
         try {
           it.remove();
-        }finally {
+        } finally {
           lock.writeLock().unlock();
         }
       } else {
@@ -155,7 +149,7 @@ public class DWRRController {
         try {
           unavailableServers.add(node);
           it.remove();
-        }finally {
+        } finally {
           lock.writeLock().unlock();
         }
       }
