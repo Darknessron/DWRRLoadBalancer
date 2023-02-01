@@ -42,7 +42,6 @@ public class DummyServerApplication {
       node.put("serverName", "DummyServer-" + port);
       node.put("address", "http://localhost:" + port);
       node.put("uri", "dummy");
-      node.put("status", "UP");
 
       log.info("Start register to DWRRLoadBalancer, URL: {}", registerURL);
       HttpRequest request = HttpRequest.newBuilder().uri(new URI(registerURL))

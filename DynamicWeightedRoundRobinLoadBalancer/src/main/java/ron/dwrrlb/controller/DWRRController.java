@@ -214,6 +214,6 @@ public class DWRRController {
     if (!StringUtils.hasText(node.getUri())) {
       return false;
     }
-    return StringUtils.hasText(node.getStatus()) || node.getStatus().equals("UP");
+    return true;
   }
 }
