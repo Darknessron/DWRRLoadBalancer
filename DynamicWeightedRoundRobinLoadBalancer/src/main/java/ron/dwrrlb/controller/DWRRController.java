@@ -195,7 +195,7 @@ public class DWRRController {
       healthStatus = getHealthStatus(node);
       if (healthStatus == null) {
         //Can't connect to actuator
-        log.debug("node {} can't connect", node.getServerName());
+        log.info("node {} can't connect", node.getServerName());
         lock.writeLock().lock();
         try {
           it.remove();
@@ -207,7 +207,7 @@ public class DWRRController {
       switch (healthStatus) {
         case "DOWN", "OUT_OF_SERVICE", "UNKNOWN" -> {
           //Still can connect to actuator
-          log.debug("Node {} is temporary unreachable", node.getServerName());
+          log.info("Node {} is temporary unreachable", node.getServerName());
           //Node is temporary unreachable, move to unavailableServers
           lock.writeLock().lock();
           try {
@@ -221,7 +221,7 @@ public class DWRRController {
         }
         case "UP" -> {
           if (isUnavailable) {
-            log.debug("Node {} resume to work", node.getServerName());
+            log.info("Node {} resume to work", node.getServerName());
             availableServers.add(node);
             it.remove();
           }
