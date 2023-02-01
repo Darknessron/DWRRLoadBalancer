@@ -2,6 +2,8 @@ package ron.dwrrlb.controller;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.io.IOException;
 import java.net.ConnectException;
 import java.net.URI;
@@ -26,6 +28,7 @@ import org.springframework.lang.NonNull;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Controller;
 import org.springframework.util.StringUtils;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -120,6 +123,30 @@ public class DWRRController {
       lock.writeLock().unlock();
     }
     return ResponseEntity.ok(true);
+  }
+
+  @GetMapping(value = "/servers", produces = MediaType.APPLICATION_JSON_VALUE)
+  public ResponseEntity<JsonNode> checkServersStatus()  {
+    ObjectMapper mapper = new ObjectMapper();
+    ArrayNode result = mapper.createArrayNode();
+    ObjectNode node;
+    ServerNode server;
+    lock.readLock().lock();
+    try {
+      for (int i = 0; i< availableServers.size(); i++)  {
+        node = mapper.createObjectNode();
+        server = availableServers.get(i);
+        node.put("Name", server.getServerName());
+        node.put("Address", server.getAddress());
+        node.put("Uri", server.getUri());
+        node.put("Weight", server.getWeight());
+
+        result.add(node);
+      }
+    }finally {
+      lock.readLock().unlock();
+    }
+    return ResponseEntity.ok(result);
   }
 
   private String getHealthStatus(ServerNode node)

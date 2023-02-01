@@ -19,9 +19,9 @@ public class SimulateHealthIndicator implements HealthIndicator {
   public Health health() {
     int i = random.nextInt(10);
     Health health = switch (i) {
-      case 0, 1, 2 -> Health.down().build();
-      case 3, 4, 5, 6 -> Health.up().build();
-      case 7, 8 -> Health.outOfService().build();
+      case 0, 1, 2, 3, 4, 5, 6 -> Health.up().build();
+      case 7 -> Health.down().build();
+      case 8 -> Health.outOfService().build();
       case 9 -> Health.unknown().build();
       default -> throw new IllegalStateException("Unexpected value: " + i);
     };
