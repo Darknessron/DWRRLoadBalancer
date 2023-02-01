@@ -42,6 +42,10 @@ public class DWRRController {
   private final ReentrantReadWriteLock lock = new ReentrantReadWriteLock();
   private final HttpClient client = HttpClient.newBuilder().build();
 
+  private final int HEAVY_LOADING_BAR = 3000;
+  private final int LIGHT_LOADING_BAR = 2000;
+  private final int DEFAULT_WEIGHT = 100;
+
   private final AtomicLong count = new AtomicLong();
   private final List<ServerNode> availableServers = new ArrayList<>();
   private final List<ServerNode> unavailableServers = new ArrayList<>();
@@ -64,14 +68,14 @@ public class DWRRController {
 
     JsonNode result;
     // Loading too heavy, skip to less loading node.
-    if (node.getWeight() < 50 && serverSize != 1) {
+    if (node.getWeight() < DEFAULT_WEIGHT / 2 && serverSize != 1) {
       log.debug("node {} loading too heavy, skip to next node", node.getServerName());
 
       //Check other nodes' weight
       int ind = IntStream.range(0, availableServers.size())
-          .filter(i -> availableServers.get(i).getWeight() >= 50).findFirst().orElse(-1);
+          .filter(i -> availableServers.get(i).getWeight() >= DEFAULT_WEIGHT / 2).findFirst().orElse(-1);
 
-      if (ind >= 0) {
+      if (ind < 0) {
         //All nodes are busy, follow original order.
         result = processRequest(node, jsonNode);
       } else {
@@ -99,9 +103,9 @@ public class DWRRController {
     log.info("Node:{}  Process Time: {} ms, weight: {}", node.getServerName(), processTime,
         node.getWeight());
     // Process speed less than 2 seconds, resume the weight to 100
-    if (processTime < 2000) {
-      node.setWeight(100);
-    } else if (processTime > 3000) {
+    if (processTime < LIGHT_LOADING_BAR) {
+      node.setWeight(DEFAULT_WEIGHT);
+    } else if (processTime > HEAVY_LOADING_BAR) {
       // Process speed more than 3 seconds, decrease the weight
       node.setWeight(node.getWeight() / 2);
     }
@@ -117,7 +121,7 @@ public class DWRRController {
     lock.writeLock().lock();
     try {
       log.info("Add new node name: {} , address: {}", node.getServerName(), node.getAddress());
-      node.setWeight(100);
+      node.setWeight(DEFAULT_WEIGHT);
       availableServers.add(node);
     } finally {
       lock.writeLock().unlock();
